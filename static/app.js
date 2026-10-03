@@ -19,6 +19,15 @@
     } catch { return {}; }
   }
   let cart = readCart();
+  let lastSync = 0;
+  function refreshProducts() {
+    if (Date.now() - lastSync < 30000) return;
+    lastSync = Date.now();
+    fetch('/api/products', {cache:'no-store'})
+      .then(r => r.ok ? r.json() : products)
+      .then(data => { products = data; render(); })
+      .catch(() => { lastSync = 0; });
+  }
   function save() { try { localStorage.setItem(key, JSON.stringify(cart)); } catch { /* private browsing */ } }
   const findItem = id => products.find(p => String(p.id) === String(id));
   const money = number => '₹' + Math.round(number * 100) / 100;
@@ -48,6 +57,7 @@
     document.querySelector('.cart-backdrop').hidden = !open;
     document.body.style.overflow = open ? 'hidden' : '';
     if (open) drawer.querySelector('.close-cart').focus();
+    if (open) refreshProducts();
   }
   document.addEventListener('click', e => {
     const add = e.target.closest('[data-add]');
@@ -58,7 +68,6 @@
     if (e.target.closest('[data-close-cart]')) showCart(false);
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') showCart(false); });
-  // Price and stock data come from the live catalog, while only item IDs/quantities live on the device.
-  fetch('/api/products', {cache:'no-store'}).then(r => r.ok ? r.json() : products).then(data => { products = data; render(); }).catch(() => render());
+  // The page has fresh catalog data; refresh again when opening the saved list.
   render();
 })();
