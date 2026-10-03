@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from datetime import timedelta
 from functools import wraps
@@ -23,12 +24,38 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=bool(os.environ.get('RAILWAY_ENVIRONMENT_ID')),
+    SEND_FILE_MAX_AGE_DEFAULT=timedelta(hours=12),
 )
 DATABASE_URL = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://', 1)
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD_HASH = os.environ.get('ADMIN_PASSWORD_HASH', '')
 if os.environ.get('RAILWAY_ENVIRONMENT_ID') and not all((DATABASE_URL, os.environ.get('SECRET_KEY'), ADMIN_PASSWORD_HASH)):
     raise RuntimeError('Railway requires DATABASE_URL, SECRET_KEY and ADMIN_PASSWORD_HASH.')
+
+# A short local cache avoids repeated cross-region database connections for
+# public catalog reads. Admin writes invalidate the current process immediately;
+# other replicas refresh within the TTL.
+_cache_lock = threading.RLock()
+_cache = {}
+_pool_lock = threading.Lock()
+_pg_pool = None
+
+
+def cached(key, loader, ttl=30):
+    with _cache_lock:
+        item = _cache.get(key)
+        if item and item[0] > time.monotonic():
+            return item[1]
+        value = loader()
+        if len(_cache) > 128:
+            _cache.clear()
+        _cache[key] = (time.monotonic() + ttl, value)
+        return value
+
+
+def clear_cache():
+    with _cache_lock:
+        _cache.clear()
 
 CATEGORIES = [
     ('all', 'All items', 'બધી વસ્તુઓ', '▦'),
@@ -53,9 +80,9 @@ SEED = [
  ('vegetables','Green chillies','લીલા મરચાં',25,'250 g','૨૫૦ ગ્રામ','photo-1597362925123-77861d3fbac7'),
  ('grains','Sharbati wheat','શરબતી ઘઉં',420,'10 kg','૧૦ કિલો','photo-1574323347407-f5e1ad6d020b'),
  ('grains','Basmati rice','બાસમતી ચોખા',95,'1 kg','૧ કિલો','photo-1586201375761-83865001e31c'),
- ('pulses','Toor dal','તુવેર દાળ',155,'1 kg','૧ કિલો','photo-1585994192701-f1a505c817ea'),
+ ('pulses','Toor dal','તુવેર દાળ',155,'1 kg','૧ કિલો','photo-1708436477874-f6d1743504bc'),
  ('pulses','Kabuli chickpeas','કાબુલી ચણા',110,'1 kg','૧ કિલો','photo-1515543904379-3d757afe72e4'),
- ('pulses','Whole moong','આખા મગ',120,'1 kg','૧ કિલો','photo-1515543904379-3d757afe72e4'),
+ ('pulses','Whole moong','આખા મગ',120,'1 kg','૧ કિલો','photo-1577110563838-e408b455c91d'),
  ('dairy','Fresh milk','તાજું દૂધ',34,'500 ml','૫૦૦ મિલી','photo-1550583724-b2692b85b150'),
  ('dairy','Desi ghee','દેશી ઘી',780,'1 L','૧ લિટર','photo-1631451095765-2c91616fc9e6'),
  ('oils','Groundnut oil','સીંગતેલ',2750,'15 kg tin','૧૫ કિલો ડબ્બો','photo-1474979266404-7eaacbcd87c5'),
@@ -65,7 +92,7 @@ SEED = [
  ('bath','Bath soap','નાહવાનો સાબુ',42,'1 piece','૧ નંગ','photo-1608571423902-eed4a5ad8108'),
  ('bath','Shampoo','શેમ્પૂ',125,'200 ml','૨૦૦ મિલી','photo-1608248543803-ba4f8c70ae0b'),
  ('bath','Toothpaste','ટૂથપેસ્ટ',65,'100 g','૧૦૦ ગ્રામ','photo-1607613009820-a29f7bb81c04'),
- ('puja','Incense sticks','અગરબત્તી',60,'1 pack','૧ પેકેટ','photo-1608571423902-eed4a5ad8108'),
+ ('puja','Incense sticks','અગરબત્તી',60,'1 pack','૧ પેકેટ','photo-1627769916425-74c2344a3439'),
 ]
 LEGACY_ADDITIONS = [row for row in SEED if row[1] in
                     {'Kabuli chickpeas','Whole moong','Bath soap','Shampoo','Toothpaste'}]
@@ -73,10 +100,23 @@ LEGACY_ADDITIONS = [row for row in SEED if row[1] in
 
 def connect():
     if DATABASE_URL:
-        import psycopg2
-        return psycopg2.connect(DATABASE_URL), True
+        global _pg_pool
+        if _pg_pool is None:
+            with _pool_lock:
+                if _pg_pool is None:
+                    from psycopg2.pool import ThreadedConnectionPool
+                    _pg_pool = ThreadedConnectionPool(1, 8, DATABASE_URL)
+        return _pg_pool.getconn(), True
     con = sqlite3.connect(os.environ.get('SQLITE_PATH', 'grocery.db'), timeout=10)
     return con, False
+
+
+def release(con, pg):
+    if pg:
+        con.rollback()  # close any read-only transaction before returning it
+        _pg_pool.putconn(con)
+    else:
+        con.close()
 
 
 def execute(sql, params=(), *, fetch=False, one=False, write=False):
@@ -91,12 +131,13 @@ def execute(sql, params=(), *, fetch=False, one=False, write=False):
             result = (rows[0] if rows else None) if one else rows
         if write:
             con.commit()
+            clear_cache()
         return result
     except Exception:
         con.rollback()
         raise
     finally:
-        con.close()
+        release(con, pg)
 
 
 def init_db():
@@ -139,18 +180,37 @@ def init_db():
                         continue
                 cur.execute(query if pg else query.replace('%s', '?'),
                             (cat,en,gu,price,unit_en,unit_gu,True,
-                             f'https://images.unsplash.com/{photo}?w=600&auto=format&fit=crop&q=80'))
+                             f'https://images.unsplash.com/{photo}?w=420&auto=format&fit=crop&q=65'))
             marker = "INSERT INTO settings(key,value) VALUES('catalog_seed_v2','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             cur.execute(marker)
+        # Correct two repeated demo photos without touching merchant edits or uploads.
+        demo_photo_fixes = (
+            ('Toor dal', 'photo-1585994192701-f1a505c817ea', 'photo-1708436477874-f6d1743504bc'),
+            ('Whole moong', 'photo-1515543904379-3d757afe72e4', 'photo-1577110563838-e408b455c91d'),
+            ('Incense sticks', 'photo-1608571423902-eed4a5ad8108', 'photo-1627769916425-74c2344a3439'),
+        )
+        for name, previous, replacement in demo_photo_fixes:
+            sql = '''UPDATE products SET image_url=%s WHERE name_en=%s AND image_url=%s
+                     AND image_data IS NULL'''
+            cur.execute(sql if pg else sql.replace('%s', '?'),
+                        (f'https://images.unsplash.com/{replacement}?w=420&auto=format&fit=crop&q=65',
+                         name, f'https://images.unsplash.com/{previous}?w=600&auto=format&fit=crop&q=80'))
+        # Smaller demo thumbnails cut mobile image transfer; only exact demo URLs change.
+        for _, name, _, _, _, _, photo in SEED:
+            sql = '''UPDATE products SET image_url=%s WHERE name_en=%s AND image_url=%s
+                     AND image_data IS NULL'''
+            cur.execute(sql if pg else sql.replace('%s', '?'),
+                        (f'https://images.unsplash.com/{photo}?w=420&auto=format&fit=crop&q=65',
+                         name, f'https://images.unsplash.com/{photo}?w=600&auto=format&fit=crop&q=80'))
         con.commit()
     except Exception:
         con.rollback()
         raise
     finally:
-        con.close()
+        release(con, pg)
 
 
-def settings():
+def _read_settings():
     values = {'shop_name': os.environ.get('SHOP_NAME', 'Ved Grocery Mart'),
               'phone': os.environ.get('STORE_PHONE', '9979215875'),
               'whatsapp': os.environ.get('WHATSAPP_PHONE', '919979215875')}
@@ -160,6 +220,10 @@ def settings():
     values['phone_link'] = re.sub(r'[^+\d]', '', values['phone'])
     values['wa_digits'] = re.sub(r'\D', '', values['whatsapp'])
     return values
+
+
+def settings():
+    return cached('shop_settings', _read_settings)
 
 
 def csrf_token():
@@ -194,13 +258,24 @@ def valid_image(file):
     data = file.read(3_000_001)
     if not 100 <= len(data) <= 3_000_000:
         raise ValueError('Image must be under 3 MB.')
-    if data.startswith(b'\xff\xd8\xff'):
-        return data, 'image/jpeg'
-    if data.startswith(b'\x89PNG\r\n\x1a\n'):
-        return data, 'image/png'
-    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
-        return data, 'image/webp'
-    raise ValueError('Upload a JPG, PNG or WebP image.')
+    if not (data.startswith(b'\xff\xd8\xff') or
+            data.startswith(b'\x89PNG\r\n\x1a\n') or
+            (data[:4] == b'RIFF' and data[8:12] == b'WEBP')):
+        raise ValueError('Upload a JPG, PNG or WebP image.')
+    # Normalize phone photos before storing them in PostgreSQL.
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    try:
+        with Image.open(io.BytesIO(data)) as original:
+            if original.width * original.height > 30_000_000:
+                raise ValueError('Image dimensions are too large.')
+            frame = ImageOps.exif_transpose(original)
+            frame.thumbnail((720, 720))
+            frame = frame.convert('RGBA' if 'A' in frame.getbands() else 'RGB')
+            result = io.BytesIO()
+            frame.save(result, format='WEBP', quality=78, method=4)
+        return result.getvalue(), 'image/webp'
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise ValueError('The image could not be read. Try another JPG, PNG or WebP.') from exc
 
 
 def product_payload(row):
@@ -211,14 +286,18 @@ def product_payload(row):
                 image_url=url_for('product_image', item_id=row['id'])
                 if row.get('has_image') else row['image_url'],
                 has_upload=bool(row.get('has_image')),
-                fallback_url=url_for('product_fallback',item_id=row['id']))
+                fallback_url=url_for('static', filename='fallback.svg'))
 
 
-def all_products():
+def _read_products():
     rows = execute('''SELECT id,cat,name_en,name_gu,price,unit_en,unit_gu,
                       in_stock,image_url,(image_data IS NOT NULL) AS has_image
                       FROM products ORDER BY id''', fetch=True)
     return [product_payload(row) for row in rows]
+
+
+def all_products():
+    return cached('products', _read_products)
 
 
 @app.context_processor
@@ -250,7 +329,9 @@ def public_products():
 
 @app.get('/image/<int:item_id>')
 def product_image(item_id):
-    row = execute('SELECT image_data,image_mime FROM products WHERE id=%s', (item_id,), one=True)
+    row = cached(('image', item_id),
+                 lambda: execute('SELECT image_data,image_mime FROM products WHERE id=%s',
+                                 (item_id,), one=True), ttl=120)
     if not row or not row['image_data']:
         abort(404)
     data = bytes(row['image_data'])
@@ -262,7 +343,9 @@ def product_image(item_id):
 
 @app.get('/placeholder/<int:item_id>.svg')
 def product_fallback(item_id):
-    row = execute('SELECT name_en,cat FROM products WHERE id=%s', (item_id,), one=True)
+    row = cached(('placeholder', item_id),
+                 lambda: execute('SELECT name_en,cat FROM products WHERE id=%s',
+                                 (item_id,), one=True), ttl=120)
     if not row:
         abort(404)
     name = html.escape(row['name_en'][:28])
@@ -321,7 +404,10 @@ def logout():
 @app.get('/admin')
 @admin_required
 def admin():
-    return render_template('admin.html', products=all_products())
+    products = all_products()
+    grouped = [(cat, en, gu, icon, [p for p in products if p['cat'] == cat])
+               for cat, en, gu, icon in CATEGORIES if cat != 'all']
+    return render_template('admin.html', products=products, grouped=grouped)
 
 
 def form_product():
@@ -355,6 +441,9 @@ def add_product():
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('admin'))
+    if not photo and not image:
+        flash('Add a photo upload or HTTPS photo link for the new item.', 'error')
+        return redirect(url_for('admin') + '#add-item')
     binary,mime = photo if photo else (None,None)
     execute('''INSERT INTO products (cat,name_en,name_gu,price,unit_en,unit_gu,
                in_stock,image_url,image_data,image_mime)
@@ -379,6 +468,11 @@ def update_product(item_id):
                     unit_en=%s,unit_gu=%s,in_stock=%s,image_url=%s,
                     image_data=%s,image_mime=%s WHERE id=%s''',
                 (cat,en,gu,price,unit_en,unit_gu,stock,image,*photo,item_id),write=True)
+    elif request.form.get('remove_photo') == 'on':
+        execute('''UPDATE products SET cat=%s,name_en=%s,name_gu=%s,price=%s,
+                    unit_en=%s,unit_gu=%s,in_stock=%s,image_url='',
+                    image_data=NULL,image_mime=NULL WHERE id=%s''',
+                (cat,en,gu,price,unit_en,unit_gu,stock,item_id),write=True)
     elif image:
         execute('''UPDATE products SET cat=%s,name_en=%s,name_gu=%s,price=%s,
                     unit_en=%s,unit_gu=%s,in_stock=%s,image_url=%s,
@@ -417,11 +511,12 @@ def update_settings():
         for key,value in [('shop_name',name),('phone',phone),('whatsapp',whatsapp)]:
             cur.execute(sql if pg else sql.replace('%s','?'), (key,value))
         con.commit()
+        clear_cache()
     except Exception:
         con.rollback()
         raise
     finally:
-        con.close()
+        release(con, pg)
     flash('Shop details saved.', 'success')
     return redirect(url_for('admin'))
 
