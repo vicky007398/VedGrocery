@@ -8,9 +8,9 @@
   <meta name="description" content="Browse today's groceries, prices and availability. Call or WhatsApp the shop directly.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Noto+Sans+Gujarati:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
-  <script src="{{ url_for('static',filename='app.js') }}" defer></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+Gujarati:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static',filename='style.css',v='5') }}">
+  <script src="{{ url_for('static',filename='app.js',v='5') }}" defer></script>
 </head>
 <body>
   <div class="notice-line"><span class="live-dot"></span><span>{{ 'સ્થાનિક ખરીદી · સરળ સંપર્ક · આજની કિંમતો' if lang|default('gu') == 'gu' else 'LOCAL SHOP · DIRECT CONTACT · CURRENT PRICES' }}</span></div>
