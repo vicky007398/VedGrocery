@@ -150,6 +150,17 @@ def init_db():
     con, pg = connect()
     try:
         cur = con.cursor()
+        # A completed migration needs no DDL or demo-photo checks on every worker boot.
+        try:
+            cur.execute("SELECT value FROM settings WHERE key='schema_ready_v4'")
+            if cur.fetchone():
+                return
+        except Exception as exc:
+            missing_sqlite_table = (isinstance(exc, sqlite3.OperationalError)
+                                    and 'no such table' in str(exc).lower())
+            if not missing_sqlite_table and getattr(exc, 'pgcode', None) != '42P01':
+                raise
+            con.rollback()
         identity = 'SERIAL PRIMARY KEY' if pg else 'INTEGER PRIMARY KEY AUTOINCREMENT'
         binary = 'BYTEA' if pg else 'BLOB'
         cur.execute(f'''CREATE TABLE IF NOT EXISTS products (
@@ -166,6 +177,7 @@ def init_db():
             cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS subcategory_gu VARCHAR(80) NOT NULL DEFAULT ''")
             cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS search_terms VARCHAR(300) NOT NULL DEFAULT ''")
             cur.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT TRUE')
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_rev VARCHAR(20) NOT NULL DEFAULT ''")
         else:
             cur.execute('PRAGMA table_info(products)')
             columns = {row[1] for row in cur.fetchall()}
@@ -179,6 +191,8 @@ def init_db():
                                         ('is_published','BOOLEAN NOT NULL DEFAULT TRUE')]:
                 if column not in columns:
                     cur.execute(f'ALTER TABLE products ADD COLUMN {column} {declaration}')
+            if 'image_rev' not in columns:
+                cur.execute("ALTER TABLE products ADD COLUMN image_rev VARCHAR(20) NOT NULL DEFAULT ''")
         cur.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         cur.execute('SELECT COUNT(*) FROM products')
         empty = cur.fetchone()[0] == 0
@@ -271,6 +285,7 @@ def init_db():
             created_at VARCHAR(32) NOT NULL
         )''')
         cur.execute('CREATE INDEX IF NOT EXISTS orders_created ON orders(id)')
+        cur.execute("INSERT INTO settings(key,value) VALUES('schema_ready_v4','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         con.commit()
     except Exception:
         con.rollback()
@@ -384,24 +399,38 @@ def product_payload(row, variants):
                 brands=sorted({v['brand'] for v in variants if v['brand']}),
                 on_offer=any(v['compare_at_price'] and v['compare_at_price'] > v['price']
                              for v in available),
-                image_url=url_for('product_image', item_id=row['id'])
+                image_url=url_for('product_image', item_id=row['id'],
+                                  v=row['image_rev'] or 'initial')
                 if row.get('has_image') else row['image_url'],
                 has_upload=bool(row.get('has_image')),
                 fallback_url=url_for('static', filename='fallback.svg'))
 
 
 def _read_products():
-    rows = execute('''SELECT id,cat,name_en,name_gu,subcategory_en,subcategory_gu,
-                      search_terms,is_published,price,unit_en,unit_gu,
-                      in_stock,image_url,(image_data IS NOT NULL) AS has_image
-                      FROM products ORDER BY id''', fetch=True)
-    variant_rows = execute('''SELECT id,product_id,brand,unit_en,unit_gu,price,
-                             compare_at_price,in_stock,is_default
-                             FROM product_variants ORDER BY is_default DESC,id''', fetch=True)
+    # One DB round-trip for the catalog, important when Railway services are far apart.
+    joined = execute('''SELECT p.id,p.cat,p.name_en,p.name_gu,p.subcategory_en,
+                        p.subcategory_gu,p.search_terms,p.is_published,p.price,
+                        p.unit_en,p.unit_gu,p.in_stock,p.image_url,p.image_rev,
+                        (p.image_data IS NOT NULL) AS has_image,
+                        v.id AS variant_id,v.product_id,v.brand,
+                        v.unit_en AS variant_unit_en,v.unit_gu AS variant_unit_gu,
+                        v.price AS variant_price,v.compare_at_price,
+                        v.in_stock AS variant_in_stock,v.is_default
+                        FROM products p LEFT JOIN product_variants v ON v.product_id=p.id
+                        ORDER BY p.id,v.is_default DESC,v.id''', fetch=True)
+    products = {}
     by_product = {}
-    for row in variant_rows:
-        by_product.setdefault(row['product_id'], []).append(variant_payload(row))
-    return [product_payload(row, by_product.get(row['id'], [])) for row in rows]
+    for row in joined:
+        products.setdefault(row['id'], row)
+        if row['variant_id'] is not None:
+            variant = dict(id=row['variant_id'], product_id=row['product_id'],
+                           brand=row['brand'], unit_en=row['variant_unit_en'],
+                           unit_gu=row['variant_unit_gu'], price=row['variant_price'],
+                           compare_at_price=row['compare_at_price'],
+                           in_stock=row['variant_in_stock'],is_default=row['is_default'])
+            by_product.setdefault(row['id'], []).append(variant_payload(variant))
+    return [product_payload(row, by_product.get(item_id, []))
+            for item_id,row in products.items()]
 
 
 def all_products():
@@ -458,6 +487,11 @@ def home():
 @app.get('/api/products')
 def public_products():
     return jsonify([p for p in all_products() if p['is_published']])
+
+
+@app.get('/healthz')
+def healthz():
+    return jsonify(ok=True)
 
 
 @app.get('/service-worker.js')
@@ -591,14 +625,15 @@ def order_receipt(reference):
 
 @app.get('/image/<int:item_id>')
 def product_image(item_id):
-    row = cached(('image', item_id),
+    revision = request.args.get('v','')[:20]
+    row = cached(('image', item_id, revision),
                  lambda: execute('SELECT image_data,image_mime FROM products WHERE id=%s',
                                  (item_id,), one=True), ttl=120)
     if not row or not row['image_data']:
         abort(404)
     data = bytes(row['image_data'])
     response = send_file(io.BytesIO(data), mimetype=row['image_mime'] or 'application/octet-stream')
-    response.headers['Cache-Control'] = 'public, max-age=300'
+    response.headers['Cache-Control'] = 'public, max-age=604800'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
 
@@ -728,10 +763,11 @@ def add_product():
     try:
         cur = con.cursor()
         sql = '''INSERT INTO products (cat,subcategory_en,subcategory_gu,name_en,name_gu,
-                 price,unit_en,unit_gu,in_stock,image_url,image_data,image_mime,search_terms)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
+                 price,unit_en,unit_gu,in_stock,image_url,image_data,image_mime,search_terms,image_rev)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''
         cur.execute(sql + (' RETURNING id' if pg else '') if pg else sql.replace('%s','?'),
-                    (cat,sub_en,sub_gu,en,gu,price,unit_en,unit_gu,stock,image,binary,mime,terms))
+                    (cat,sub_en,sub_gu,en,gu,price,unit_en,unit_gu,stock,image,binary,mime,terms,
+                     secrets.token_hex(8) if photo else ''))
         item_id = cur.fetchone()[0] if pg else cur.lastrowid
         sql = '''INSERT INTO product_variants
                  (product_id,brand,unit_en,unit_gu,price,in_stock,is_default)
@@ -763,8 +799,9 @@ def update_product(item_id):
         execute('''UPDATE products SET cat=%s,subcategory_en=%s,subcategory_gu=%s,
                     search_terms=%s,name_en=%s,name_gu=%s,price=%s,
                     unit_en=%s,unit_gu=%s,in_stock=%s,image_url=%s,
-                    image_data=%s,image_mime=%s WHERE id=%s''',
-                (cat,sub_en,sub_gu,terms,en,gu,price,unit_en,unit_gu,stock,image,*photo,item_id),write=True)
+                    image_data=%s,image_mime=%s,image_rev=%s WHERE id=%s''',
+                (cat,sub_en,sub_gu,terms,en,gu,price,unit_en,unit_gu,stock,image,*photo,
+                 secrets.token_hex(8),item_id),write=True)
     elif request.form.get('remove_photo') == 'on':
         execute('''UPDATE products SET cat=%s,subcategory_en=%s,subcategory_gu=%s,
                     search_terms=%s,name_en=%s,name_gu=%s,price=%s,
