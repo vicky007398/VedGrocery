@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Ved Grocery Mart",
+  "short_name": "Ved Grocery",
+  "description": "Gujarati and English grocery prices, shopping list, and direct shop contact.",
+  "start_url": "/?lang=gu",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b111b",
+  "theme_color": "#0b111b",
+  "lang": "gu",
+  "icons": [
+    {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
