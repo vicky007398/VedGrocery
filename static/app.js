@@ -1,6 +1,17 @@
 (() => {
   const source = document.getElementById('catalog-data');
   if (!source) return;
+  // Keep the selected chip in view after a category link loads a new page.
+  requestAnimationFrame(() => {
+    for (const selector of ['.category-scroll', '.subcategory-scroll']) {
+      const strip = document.querySelector(selector);
+      const selected = strip?.querySelector('.selected');
+      if (!selected) continue;
+      const stripLeft = strip.getBoundingClientRect().left;
+      const chipLeft = selected.getBoundingClientRect().left;
+      strip.scrollLeft += chipLeft - stripLeft - (strip.clientWidth - selected.clientWidth) / 2;
+    }
+  });
   const config = JSON.parse(document.getElementById('shop-data').textContent);
   let products = JSON.parse(source.textContent);
   const key = 'ved-grocery-shopping-list-v2';
@@ -45,6 +56,7 @@
     const subtotal = lines.reduce((sum,x) => sum+x.qty*x.match.variant.price,0);
     const count = lines.reduce((sum,x) => sum+x.qty,0);
     document.querySelectorAll('[data-cart-count]').forEach(el => { el.textContent = count; });
+    document.querySelector('[data-clear-cart]').disabled = !count;
     document.getElementById('cart-total').textContent = money(subtotal);
     const container = document.getElementById('cart-items');
     if (!lines.length) container.innerHTML = `<div class="cart-empty"><div class="empty-icon">☷</div><h3>${messages.empty}</h3><p>${messages.hint}</p></div>`;
@@ -97,6 +109,12 @@
     if (add) { const id=add.dataset.add; cart[id]=Math.min(99,(cart[id]||0)+1); save(); render(); showCart(true); return; }
     const change = e.target.closest('[data-qty]');
     if (change) { const id=change.dataset.id; cart[id]=Math.min(99,(cart[id]||0)+Number(change.dataset.qty)); if(cart[id]<=0) delete cart[id]; save(); render(); return; }
+    if (e.target.closest('[data-clear-cart]')) {
+      if (Object.keys(cart).length && window.confirm(gu ? 'આખી ખરીદીની યાદી ખાલી કરવી છે?' : 'Clear your entire shopping cart?')) {
+        cart = {}; save(); render();
+      }
+      return;
+    }
     if (e.target.closest('[data-open-cart]')) showCart(true);
     if (e.target.closest('[data-close-cart]')) showCart(false);
   });

@@ -1,5 +1,5 @@
-const CACHE = 'ved-grocery-shell-v1';
-const ASSETS = ['/static/style.css?v=8', '/static/app.js?v=8', '/static/fallback.svg', '/static/manifest.webmanifest', '/static/icon-192.png', '/static/icon-512.png', '/static/offline.html'];
+const CACHE = 'ved-grocery-shell-v3';
+const ASSETS = ['/static/style.css?v=10', '/static/app.js?v=10', '/static/fallback.svg', '/static/manifest.webmanifest', '/static/icon-192.png', '/static/icon-512.png', '/static/offline.html'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
