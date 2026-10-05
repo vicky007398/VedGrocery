@@ -182,6 +182,12 @@
     const button = document.getElementById('submit-order');
     button.disabled = true;
     try {
+      const sessionResponse = await fetch('/api/order-session',{cache:'no-store',credentials:'same-origin'});
+      if (!sessionResponse.ok) throw new Error(gu ? 'કનેક્શન તપાસો અને ફરી પ્રયાસ કરો.' : 'Check your connection and try again.');
+      const current = await sessionResponse.json();
+      if (!current.csrf || !current.order_token) throw new Error(gu ? 'ફરી પ્રયાસ કરો.' : 'Please try again.');
+      orderForm.elements.csrf.value = current.csrf;
+      orderForm.elements.order_token.value = current.order_token;
       const response = await fetch(orderForm.action,{method:'POST',body:new FormData(orderForm),credentials:'same-origin'});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error||'Unable to send request.');
