@@ -56,7 +56,9 @@
     const subtotal = lines.reduce((sum,x) => sum+x.qty*x.match.variant.price,0);
     const count = lines.reduce((sum,x) => sum+x.qty,0);
     document.querySelectorAll('[data-cart-count]').forEach(el => { el.textContent = count; });
-    document.querySelector('[data-clear-cart]').disabled = !count;
+    document.querySelector('[data-open-cart]').setAttribute('aria-label',
+      gu ? `ખરીદીની યાદી ખોલો, ${count} વસ્તુઓ` : `Open shopping cart, ${count} items`);
+    document.querySelector('[data-clear-cart]').disabled = !Object.keys(cart).length;
     document.getElementById('cart-total').textContent = money(subtotal);
     const container = document.getElementById('cart-items');
     if (!lines.length) container.innerHTML = `<div class="cart-empty"><div class="empty-icon">☷</div><h3>${messages.empty}</h3><p>${messages.hint}</p></div>`;
@@ -82,7 +84,11 @@
     drawer.setAttribute('aria-hidden',String(!open));
     document.querySelector('.cart-backdrop').hidden = !open;
     document.body.style.overflow = open ? 'hidden' : '';
-    if (open) { drawer.querySelector('.close-cart').focus(); refreshProducts(); }
+    if (open) { drawer.scrollTop = 0; drawer.querySelector('.close-cart').focus(); refreshProducts(); }
+    else {
+      drawer.querySelector('.checkout-panel').open = false;
+      document.querySelector('[data-open-cart]').focus();
+    }
   }
   function deliveryFields() {
     const delivery = document.querySelector('input[name="fulfillment"]:checked')?.value === 'delivery';
@@ -106,17 +112,32 @@
   }));
   document.addEventListener('click',e => {
     const add = e.target.closest('[data-add]');
-    if (add) { const id=add.dataset.add; cart[id]=Math.min(99,(cart[id]||0)+1); save(); render(); showCart(true); return; }
+    if (add) {
+      const id=add.dataset.add; cart[id]=Math.min(99,(cart[id]||0)+1); save(); render();
+      const icon=document.querySelector('[data-open-cart]');
+      icon.classList.remove('cart-added'); void icon.offsetWidth; icon.classList.add('cart-added');
+      return;
+    }
     const change = e.target.closest('[data-qty]');
-    if (change) { const id=change.dataset.id; cart[id]=Math.min(99,(cart[id]||0)+Number(change.dataset.qty)); if(cart[id]<=0) delete cart[id]; save(); render(); return; }
+    if (change) {
+      const id=change.dataset.id;
+      cart[id]=Math.min(99,(cart[id]||0)+Number(change.dataset.qty));
+      if(cart[id]<=0) delete cart[id];
+      save(); render();
+      if (!Object.keys(cart).length) showCart(false);
+      return;
+    }
     if (e.target.closest('[data-clear-cart]')) {
       if (Object.keys(cart).length && window.confirm(gu ? 'આખી ખરીદીની યાદી ખાલી કરવી છે?' : 'Clear your entire shopping cart?')) {
-        cart = {}; save(); render();
+        cart = {}; save(); render(); showCart(false);
       }
       return;
     }
     if (e.target.closest('[data-open-cart]')) showCart(true);
-    if (e.target.closest('[data-close-cart]')) showCart(false);
+    if (e.target.closest('[data-close-cart]')) {
+      if (e.target.closest('a[data-close-cart]')) e.preventDefault();
+      showCart(false);
+    }
   });
   document.addEventListener('keydown',e => { if(e.key==='Escape') showCart(false); });
   const orderForm = document.getElementById('order-form');

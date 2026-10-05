@@ -195,3 +195,13 @@ body{background:#f7faf5;color:var(--text)}
 .category-scroll,.subcategory-scroll{scrollbar-width:thin;scroll-snap-type:x proximity}
 .category-chip,.subcategory-chip{scroll-snap-align:center}
 @media(max-width:650px){.floating-cart{width:49px;height:49px;right:12px;bottom:12px}.floating-cart svg{width:27px;height:27px}}
+/* One scrollable mobile drawer keeps items and the close control reachable. */
+.cart-drawer{display:block;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.cart-header{position:sticky;top:0;z-index:4;background:#fff;min-height:88px}
+.close-cart{display:grid;place-items:center;text-decoration:none;flex:none}
+.back-to-products{display:block;background:#fff;color:#1b7548;font-size:11px;font-weight:800;padding:9px 22px;border-bottom:1px solid #e1eee1}
+.back-to-products:hover{background:#eef8ea}
+.cart-items{flex:none;overflow:visible;min-height:105px}
+.cart-bottom{padding-bottom:max(22px,env(safe-area-inset-bottom))}
+.floating-cart.cart-added{animation:cart-nudge .5s ease-out}
+@keyframes cart-nudge{0%{transform:scale(1)}35%{transform:scale(1.17)}100%{transform:scale(1)}}
