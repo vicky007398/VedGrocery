@@ -141,8 +141,38 @@
   });
   document.addEventListener('keydown',e => { if(e.key==='Escape') showCart(false); });
   const orderForm = document.getElementById('order-form');
+  const remember = orderForm.querySelector('[name="remember_details"]');
+  const detailNames = ['customer_name','phone','address','pincode'];
+  const detailKey = 'ved-grocery-customer-details-v1';
+  function saveDetails() {
+    try {
+      if (!remember.checked) return;
+      const details = Object.fromEntries(detailNames.map(name => [name,orderForm.elements[name].value]));
+      localStorage.setItem(detailKey,JSON.stringify(details));
+    } catch { /* Storage may be unavailable in private mode. */ }
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(detailKey) || 'null');
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      for (const name of detailNames) {
+        if (typeof saved[name] === 'string') orderForm.elements[name].value = saved[name];
+      }
+      remember.checked = true;
+    }
+  } catch { /* Continue with an empty form. */ }
+  remember.addEventListener('change', () => {
+    if (remember.checked) saveDetails();
+    else { try { localStorage.removeItem(detailKey); } catch { /* Storage unavailable. */ } }
+  });
+  orderForm.addEventListener('input', saveDetails);
+  orderForm.querySelector('[data-forget-details]').addEventListener('click', () => {
+    try { localStorage.removeItem(detailKey); } catch { /* Storage unavailable. */ }
+    remember.checked = false;
+    for (const name of detailNames) orderForm.elements[name].value = '';
+  });
   orderForm.addEventListener('submit',async e => {
     e.preventDefault();
+    saveDetails();
     const error = orderForm.querySelector('.checkout-error');
     error.hidden = true;
     const map = allVariants();
