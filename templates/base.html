@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0b111b">
+  <meta name="theme-color" content="#e8f5e3">
   <link rel="manifest" href="{{ url_for('static',filename='manifest.webmanifest') }}">
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static',filename='icon-192.png') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static',filename='icon-192.png') }}">
@@ -13,8 +13,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://images.unsplash.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+Gujarati:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static',filename='style.css',v='8') }}">
-  <script src="{{ url_for('static',filename='app.js',v='8') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static',filename='style.css',v='10') }}">
+  <script src="{{ url_for('static',filename='app.js',v='10') }}" defer></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol === 'https:') window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
     let installPrompt;
