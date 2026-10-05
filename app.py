@@ -511,6 +511,15 @@ def order_error(message, status=400):
     return jsonify(error=message), status
 
 
+@app.get('/api/order-session')
+def order_session():
+    # A cached catalog or another completed order can leave the form with old
+    # hidden values. Return the current signed-session values before checkout.
+    response = jsonify(csrf=csrf_token(), order_token=order_token())
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.post('/api/orders')
 def create_order():
     require_csrf()
