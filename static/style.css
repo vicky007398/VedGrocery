@@ -214,3 +214,5 @@ body{background:#f7faf5;color:var(--text)}
 
 /* Mobile catalog opens directly at search and categories. */
 @media(max-width:650px){.main-content>.hero,.main-content>.trust-strip{display:none}.fulfillment-note{padding:7px 4%;gap:6px 12px}.catalog-section{padding-top:14px}}
+
+.daily-welcome{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 4.5%;background:#eaf8e7;border-bottom:1px solid #c9e6c9;color:#195b38}.daily-welcome strong{display:block;font-size:13px;line-height:1.35}.daily-welcome p{margin:2px 0 0;font-size:11px;color:#47705a}.daily-welcome>span{font-size:20px;color:#dc963e}@media(max-width:650px){.daily-welcome{padding:9px 4%}.daily-welcome strong{font-size:12px}.daily-welcome p{font-size:10px}}
