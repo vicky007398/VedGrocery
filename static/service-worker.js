@@ -1,4 +1,4 @@
-const CACHE = 'ved-grocery-shell-v10';
+const CACHE = 'ved-grocery-shell-v11';
 const ASSETS = ['/static/style.css?v=17', '/static/app.js?v=16', '/static/fallback.svg', '/static/manifest.webmanifest', '/static/icon-192.png', '/static/icon-512.png', '/static/offline.html'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
