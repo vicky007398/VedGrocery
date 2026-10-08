@@ -218,3 +218,8 @@ body{background:#f7faf5;color:var(--text)}
 .daily-welcome{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 4.5%;background:#eaf8e7;border-bottom:1px solid #c9e6c9;color:#195b38}.daily-welcome strong{display:block;font-size:13px;line-height:1.35}.daily-welcome p{margin:2px 0 0;font-size:11px;color:#47705a}.daily-welcome>span{font-size:20px;color:#dc963e}@media(max-width:650px){.daily-welcome{padding:9px 4%}.daily-welcome strong{font-size:12px}.daily-welcome p{font-size:10px}}
 
 .welcome-splash:not([hidden]){position:fixed;inset:0;z-index:1100;display:grid;place-items:center;padding:18px;background:linear-gradient(145deg,#e5f8df,#c8efdf);text-align:center}.welcome-card{position:relative;width:min(440px,100%);background:white;color:#17563a;border:1px solid #b7ddbe;border-radius:20px;padding:32px 24px;box-shadow:0 24px 65px #195c3940}.welcome-card button{position:absolute;top:10px;right:12px;border:0;background:transparent;color:#28634a;font-size:27px}.welcome-mark{font-size:36px;color:#e3a43e}.welcome-card h2{font-size:clamp(22px,5vw,30px);line-height:1.35;margin:8px 0}.welcome-card p{font-size:14px;margin:8px 0;color:#436c51}.welcome-card small{color:#659173}
+
+/* Keep category choices visible while customers scroll through products. */
+.catalog-section .category-scroll{position:sticky;top:103px;z-index:35;background:#f7faf5;padding:7px 0 10px;box-shadow:0 1px 0 #cde5c9}
+.catalog-section .subcategory-scroll{position:sticky;top:153px;z-index:34;background:#f7faf5;padding:7px 0 10px;box-shadow:0 1px 0 #cde5c9}
+@media(max-width:650px){.catalog-section .category-scroll{top:87px}.catalog-section .subcategory-scroll{top:137px}}
