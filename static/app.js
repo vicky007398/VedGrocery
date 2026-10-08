@@ -100,16 +100,58 @@
     render();
   }
   document.querySelectorAll('input[name="fulfillment"]').forEach(el => el.addEventListener('change',deliveryFields));
-  document.querySelectorAll('.variant-select').forEach(select => select.addEventListener('change', () => {
+  document.addEventListener('change', event => {
+    const select = event.target.closest('.variant-select');
+    if (!select) return;
     const card = select.closest('.product-card');
     const match = allVariants().get(select.value);
     if (!match) return;
     const v = match.variant;
     card.querySelector('[data-card-price]').textContent = money(v.price);
     card.querySelector('[data-card-unit]').textContent = '/ '+(gu?v.unit_gu:v.unit_en);
+    const discounted = v.compare_at_price != null && v.compare_at_price > v.price;
+    card.querySelector('[data-card-offer]').hidden = !discounted;
+    const regular = card.querySelector('[data-card-regular]');
+    regular.hidden = !discounted;
+    regular.textContent = discounted ? money(v.compare_at_price) : '';
     card.querySelector('[data-add]').dataset.add = v.id;
     card.querySelector('[data-add]').disabled = !v.in_stock;
-  }));
+  });
+  // Change categories without reloading the app or losing the catalog position.
+  let catalogRequest = 0;
+  async function loadCategory(url, push = true) {
+    const requestId = ++catalogRequest;
+    const section = document.querySelector('.catalog-section');
+    const previousTop = section.getBoundingClientRect().top + window.scrollY;
+    const previousScroll = window.scrollY;
+    try {
+      const response = await fetch(url, {credentials:'same-origin',cache:'no-store'});
+      if (!response.ok) throw new Error('Catalog unavailable');
+      const page = new DOMParser().parseFromString(await response.text(),'text/html');
+      if (requestId !== catalogRequest) return;
+      const next = page.querySelector('.catalog-section');
+      if (!next) throw new Error('Catalog missing');
+      section.replaceWith(next);
+      if (push) history.pushState({catalog:true},'',url);
+      const active = new URL(url, location.href).searchParams.get('cat') || 'all';
+      document.querySelectorAll('.sidebar .side-link').forEach(link => {
+        link.classList.toggle('active',new URL(link.href).searchParams.get('cat') === active);
+      });
+      for (const selector of ['.category-scroll','.subcategory-scroll']) {
+        const strip = next.querySelector(selector), selected = strip?.querySelector('.selected');
+        if (strip && selected) strip.scrollLeft = selected.offsetLeft - strip.offsetLeft - (strip.clientWidth-selected.clientWidth)/2;
+      }
+      // Stay at the catalog, even when switching from a long list to a short one.
+      if (previousScroll > previousTop) window.scrollTo({top:previousTop - document.querySelector('.site-heading').offsetHeight,behavior:'instant'});
+    } catch { if (requestId === catalogRequest) location.assign(url); }
+  }
+  document.addEventListener('click', event => {
+    const link = event.target.closest('.sidebar .side-link, .category-scroll a, .subcategory-scroll a');
+    if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    loadCategory(link.href);
+  });
+  window.addEventListener('popstate', () => loadCategory(location.href, false));
   document.addEventListener('click',e => {
     const add = e.target.closest('[data-add]');
     if (add) {
